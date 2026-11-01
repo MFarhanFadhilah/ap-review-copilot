@@ -1,0 +1,2 @@
+This is a plain text file, not a table.
+The dashboard should reject it with a clear message.
