@@ -1,0 +1,133 @@
+# Parameters for the synthetic invoice-line generator (data/synthetic/generate.py).
+#
+# Every value here is set by hand. The generator never reads real data.
+# Shares and rates are loosely shaped like published aggregate facts about
+# accounts-payable data (heavy class imbalance, many duplicate postings, a few
+# messy IDs). No value is copied from any real vendor, account or token.
+#
+# The three "learnability" knobs at the bottom decide how hard the task is.
+
+seed: 42
+rows: 6000
+# Rows are generated and written in chunks so a 10M-row run never holds
+# everything in memory. The committed sample fits in one chunk.
+chunk_rows: 1000000
+
+timeline:
+  start: "2022-01"            # first month of the main block
+  months: 24                  # main block: 2022-01 to 2023-12
+  # The source system changed its date convention: month-start dates before
+  # this month, month-end dates from it on. Both mean "this posting period".
+  convention_switch: "2022-05"
+  legacy_share: 0.007         # a few old Cat1 rows, well before the main block
+  legacy_start: "2020-03"
+  legacy_end: "2021-06"
+
+classes:
+  # Shares of the base rows. Cat5 is handled separately because it is nearly absent.
+  shares: {Cat1: 0.892, Cat2: 0.097, Cat3: 0.0045, Cat4: 0.003, Cat6: 0.0035}
+  cat5_rows: 3                # always credit notes (negative amounts)
+
+labels:
+  # 11 spellings for 6 classes. Weights are relative within a class.
+  spellings:
+    Cat1: {"Category_1": 0.80, "category_1": 0.15, "Category 1": 0.05}
+    Cat2: {"Category_2": 0.85, "Category 2": 0.15}
+    Cat3: {"Category_3": 0.70, "Category _3": 0.30}
+    Cat4: {"Category_4": 1.0}
+    Cat5: {"Category_5": 1.0}
+    Cat6: {"Category_6": 0.75, "Categry_6": 0.25}
+
+vendors:
+  count: 330                  # at 6,000 rows; grows with sqrt(rows)
+  zipf_exponent: 1.0          # a few vendors send most of the lines
+  # Share of vendors whose main class is each class (at least 2 per rare class).
+  class_share: {Cat1: 0.855, Cat2: 0.115, Cat3: 0.01, Cat4: 0.008, Cat6: 0.012}
+  # The largest Cat1 vendors that also send other classes ("mixed" vendors).
+  mixed_share: 0.12
+  # Name: one unique token plus 0 to 3 tokens shared across vendors (like "Ltd").
+  shared_name_tokens: 40
+  name_extra_tokens_p: [0.35, 0.35, 0.2, 0.1]
+  amount_spread: 0.5          # sigma of each vendor's log-amount offset
+
+new_vendors:
+  # In the last `months` months, this share of lines comes from vendors
+  # never seen before that window.
+  months: 4
+  late_share: 0.07
+  vendor_share: 0.08          # share of vendors held back as "new"
+
+accounts:
+  count: 200                  # at 6,000 rows; grows with sqrt(rows)
+  groups: 8                   # the first token of an account code is its group
+  group_weights: [0.22, 0.16, 0.14, 0.12, 0.12, 0.10, 0.08, 0.06]
+  # Groups each class tends to post to (1-based).
+  class_groups:
+    Cat1: [1, 2, 3, 4, 5, 6, 7, 8]
+    Cat2: [2, 5]
+    Cat3: [6]
+    Cat4: [7]
+    Cat5: [1]
+    Cat6: [4]
+  # Doc type is almost fixed by account group.
+  group_doc_types: [NoDoc, NoDoc, Doc1, NoDoc, NoDoc, Doc2, Doc3, NoDoc]
+  doc_type_purity: 0.997
+  home_account_p: 0.7         # a vendor's first home account vs its second
+
+description:
+  vocabulary: 1500            # Tok1 ... TokN; grows with sqrt(rows)
+  signal_tokens: {Cat1: 60, Cat2: 40, Cat3: 8, Cat4: 8, Cat5: 4, Cat6: 8}
+  length_p: [0.3, 0.4, 0.2, 0.1]   # 1 to 4 tokens
+  noise_zipf_exponent: 1.1
+  missing_share: 0.025
+
+amounts:
+  # Log-normal per class: median and sigma of log(amount).
+  median: {Cat1: 2500, Cat2: 450, Cat3: 1200, Cat4: 5000, Cat5: 800, Cat6: 900}
+  sigma: {Cat1: 1.9, Cat2: 1.1, Cat3: 0.8, Cat4: 1.2, Cat5: 0.8, Cat6: 1.5}
+  round_share: 0.06           # whole hundreds
+  credit_note_share: 0.012    # negative amounts on Cat1 and Cat2 lines
+
+ref_ids:
+  # Shape of each vendor's reference IDs.
+  shape_p: {numeric: 0.6, alphanumeric: 0.15, separator: 0.2, missing: 0.05}
+  # One vendor's long numeric IDs went through Excel and became scientific
+  # notation (3.17E+11). Anonymisation then scrambled the letter E: "3.17Q+11".
+  corrupted_vendor_share: 0.6
+  corrupted_stray_share: 0.002  # the same damage on a few other vendors' lines
+
+duplicates:
+  extra_copy_rate: 0.10       # extra exact copies, as a share of all rows
+  copies_geometric_p: 0.75    # most duplicate groups have 2 copies
+  # One large line posted many times in one month across many accounts.
+  big_line: {copies: 50, accounts: 30, amount: 6412880.40, month: "2023-12"}
+  # One group of identical lines whose labels disagree.
+  conflict_group: {Cat1: 3, Cat2: 2}
+
+near_duplicates:
+  # The same vendor, amount, account and description posted again within a
+  # few weeks with a slightly different reference ID. Ground truth goes to a
+  # separate file, never into the raw file.
+  # Col5 is a monthly posting period, so "a few weeks later" means the same
+  # period or the next one.
+  rate: 0.015
+  next_period_share: 0.35     # share of copies posted in the next period
+
+fixed_fee:
+  # One vendor bills the same amount to one account every month. Its label
+  # changes twice: the labelling scheme drifted, the invoices did not.
+  amount: 2450.00
+  schedule:                   # label from this month on
+    "2022-01": Cat4
+    "2022-03": Cat6
+    "2022-05": Cat3
+
+# ---------------------------------------------------------------------------
+# Learnability knobs
+# ---------------------------------------------------------------------------
+learnability:
+  label_noise: 0.02           # share of base labels flipped, half Cat1 -> Cat2 and half Cat2 -> Cat1
+  vendor_class_overlap: 0.35  # chance a non-Cat1 line comes from a mixed Cat1 vendor
+  cat1_overlap_factor: 0.1    # Cat1 lines borrow Cat2 vendors at overlap x this factor
+  account_class_signal: 0.35  # chance the account is drawn from the class's groups, not the vendor's home
+  description_signal: 0.35    # chance each description token is a class signal token
