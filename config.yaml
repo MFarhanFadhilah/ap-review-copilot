@@ -1,0 +1,71 @@
+# Central configuration. Every script reads from here, so changing a path,
+# a split date or a threshold never requires a code change.
+
+paths:
+  # The committed synthetic sample (data/synthetic/). Any CSV, Parquet or Excel file
+  # with columns Col1-Col7 and ClassificationLabel works here.
+  raw_data: data/synthetic/sample.csv
+  clean_data: data/processed/clean.csv   # inspection copy; training always re-cleans from raw
+  cleaning_log: data/processed/cleaning_log.json
+  duplicate_report: data/processed/possible_duplicate_postings.csv
+  model_dir: models
+
+columns:
+  vendor: Col1          # assumed: vendor / supplier name (tokenised)
+  ref_id: Col2          # assumed: invoice or reference number
+  amount: Col3          # assumed: line amount
+  description: Col4     # assumed: line description (tokenised)
+  period: Col5          # assumed: posting period
+  account: Col6         # assumed: GL account / cost centre (tokenised, hierarchical)
+  doc_type: Col7        # assumed: supporting-document type
+  label: ClassificationLabel
+
+cleaning:
+  # Rows before this period sit far from the main block (Jan-2022 onwards)
+  # and are flagged rather than dropped.
+  legacy_period_before: "2022-01-01"
+
+split:
+  # Time-based hold-out: train on everything up to and including this period,
+  # test on the later periods. Mimics "train on the past, score the future".
+  train_end_period: "2023-08-31"
+  # 10% hold-out test set, carved from the raw file before cleaning
+  # (stratified by label, duplicate copies kept together). See src/split.py.
+  holdout_fraction: 0.10
+  holdout_seed: 2026
+
+model:
+  # Logistic regression, L2, balanced class weights. Chosen by cross-validation over a
+  # ladder of simpler and more complex models (see docs/historical_results.md).
+  C: 10
+  random_state: 42
+
+routing:
+  # Auto-label only Cat1 predictions whose auto-labelled set reaches this precision
+  # (measured on out-of-fold predictions). Everything else goes to human review.
+  target_cat1_precision: 0.98
+  # Confidence bands shown to reviewers (calibrated probability of the predicted class).
+  # Reviewers see the band, not a raw probability: a band is easier to act on
+  # and does not pretend the calibration is exact.
+  confidence_bands:
+    high: 0.9
+    medium: 0.7
+
+agent:
+  # LLM that writes the reviewer note. Used only when ANTHROPIC_API_KEY is set;
+  # otherwise the agent runs offline with a template note (same tools, same decisions).
+  # Claude Haiku 5.5: the note is a short, well-specified writing task over facts the
+  # code has already gathered (no decisions, no open-ended reasoning), so the fast,
+  # low-cost model is enough. It supports structured JSON output and effort levels.
+  # Switch to claude-sonnet-5-5 or claude-opus-5-5 if reviewers find the notes weak.
+  model: claude-haiku-5-5
+  effort: low
+  max_tokens: 4000         # thinking counts towards max_tokens, so leave room
+  # Server-side refusal fallback (fallbacks="default", beta). Haiku 5.5 has none, so off;
+  # a refusal falls back to the template note. Turn on for Opus or Sonnet.
+  server_side_fallback: false
+  audit_log: logs/agent_audit.jsonl
+  similar_k: 5
+  # A line is "novel" if its nearest training line is less similar than this
+  # percentile of training lines' own nearest-neighbour similarity.
+  novelty_percentile: 1
