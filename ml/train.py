@@ -40,7 +40,7 @@ from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.pipeline import Pipeline
 
 from ml.calibration import RareClassCalibratedCV
-from ml.clean import FEATURE_COLS, clean_training_data
+from ml.clean import FEATURE_COLS, clean_training_data, load_raw
 from ml.explain import feature_means
 from ml.features import build_preprocessor
 from ml.policy import AUTO_CLASS, choose_threshold
@@ -99,10 +99,16 @@ def fit_threshold(X: pd.DataFrame, y: pd.Series, target_precision: float, C: flo
     return threshold, stats
 
 
-def train(cfg: dict, until_split: bool = False, output: str | Path | None = None) -> dict:
-    """Fit and save the bundle. ``until_split`` restricts training to the training months."""
-    raw_path = ROOT / cfg["paths"]["raw_data"]
-    df, clean_log, _ = clean_training_data(load_development_raw(cfg))   # never the hold-out
+def train(cfg: dict, until_split: bool = False, output: str | Path | None = None,
+          data: str | Path | None = None) -> dict:
+    """Fit and save the bundle. ``until_split`` restricts training to the training months.
+
+    ``data`` trains on a whole separate file instead of the development set. It is for
+    extra generated evaluation sets, which have no hold-out of their own (``ml/evaluate.py --data``).
+    """
+    raw_path = Path(data) if data else ROOT / cfg["paths"]["raw_data"]
+    raw = load_raw(raw_path) if data else load_development_raw(cfg)   # never the hold-out
+    df, clean_log, _ = clean_training_data(raw)
     df = df[~df["label"].isin(UNLEARNABLE)].reset_index(drop=True)
     if until_split:
         df = df[df["period"] <= pd.Timestamp(cfg["split"]["train_end_period"])].reset_index(drop=True)
