@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+
+      # The lock file pins exact versions. NumPy does not promise the same random
+      # stream across versions, so the determinism check below depends on it.
+      - name: Install
+        run: pip install -r requirements-lock.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Regenerate the synthetic sample and check it matches the committed one
+        run: |
+          python -m data.synthetic.generate --out "$RUNNER_TEMP/sample.csv"
+          cmp "$RUNNER_TEMP/sample.csv" data/synthetic/sample.csv
+          cmp "$RUNNER_TEMP/sample_near_duplicates.csv" data/synthetic/sample_near_duplicates.csv
+
+      # The model is not committed: it is rebuilt from the sample in about 10 seconds.
+      - name: Split, train and evaluate
+        run: |
+          python -m ml.split
+          python -m ml.train
+          python -m ml.evaluate
+
+      - name: Tests
+        env:
+          ANTHROPIC_API_KEY: ""   # offline mode: the agent tests never call the API
+        run: python -m pytest -q
+
+      # Without a .denylist (it is never committed) this runs the file-size, .xls and
+      # old-token checks. The private-data check only runs on the owner's machine.
+      - name: Public-safety check
+        run: python tools/check_public_safe.py
