@@ -141,11 +141,7 @@ class ReviewAgent:
             allowed.add("Cat5")   # the note should say a credit note may be Cat5, which the model cannot predict
         text = " ".join([*(note.get(f, "") for f in text_fields), *(x for f in list_fields for x in note.get(f, []))])
         named = {m.replace(" ", "") for m in _CATEGORY.findall(text)}
-        # The check guards against an LLM inventing a category. The offline template is code that
-        # only states evidence and the fixed policy ("every prediction other than Cat1 is checked"),
-        # so it is not checked: otherwise a line whose evidence has no Cat1 would reject the template
-        # and fall back to the very same template, with a misleading "LLM note not used" warning.
-        if named - allowed and self.note_writer.mode != "offline":
+        if named - allowed:
             return self._fallback(facts, guard, f"LLM {kind} named categories not in the evidence: {sorted(named - allowed)}", kind)
 
         # Instruction-like text: mention it only when the code's flag says so, and always when it does.

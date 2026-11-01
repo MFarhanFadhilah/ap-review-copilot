@@ -394,3 +394,28 @@ def test_demo_transcript_runs_offline(monkeypatch, tmp_path):
     out = demo.main(["--output", str(tmp_path / "demo.md")])
     text = out.read_text()
     assert text.count("## ") >= 5 and "`check_suspicious_text`" in text and "`value_frequencies`" in text
+
+
+def test_template_note_names_only_categories_in_the_evidence(make_agent, bundle):
+    """The fixed-fee vendor's lines have no Cat1 anywhere in their evidence. The offline template
+    must still pass the category check, so the note is the template itself, not a fallback."""
+    from ml.agent.agent import _CATEGORY
+    ref = bundle["reference_lines"]
+    stats = ref.groupby("Col1").agg(amounts=("Col3", "nunique"), accounts=("Col6", "nunique"),
+                                    labels=("label", "nunique"), lines=("label", "size"))
+    fixed = stats[(stats.amounts == 1) & (stats.accounts == 1) & (stats.labels >= 2) & (stats.lines >= 6)].index
+    assert len(fixed), "the sample should contain a fixed-fee vendor"
+    line = ref[ref["Col1"] == fixed[0]].sort_values("period").iloc[-1]
+    record = {c: line[c] for c in ["Col1", "Col2", "Col3", "Col4", "Col6", "Col7"]}
+    record["Col5"] = f"{line['period']:%Y-%m-%d}"
+
+    result = make_agent().run(record)
+    assert result["route"] == "review" and result["label"] != "Cat1"
+    evidence = {result["label"]} | {
+        s["label"] for step in result["steps"] if step["tool"] == "find_similar_invoices" for s in step["output"]["similar"]}
+    evidence |= {k for step in result["steps"] if step["tool"] == "vendor_history" for k in step["output"]["label_counts"]}
+    evidence |= {step["output"]["runner_up"] for step in result["steps"] if step["tool"] == "explain_prediction"}
+    assert "Cat1" not in evidence                       # the case that used to trip the check
+    assert result["mode"] == "offline" and result["guardrail"]["fallback_reason"] is None
+    named = {m.replace(" ", "") for m in _CATEGORY.findall(result["note_text"].split("\n", 1)[1])}
+    assert named <= evidence

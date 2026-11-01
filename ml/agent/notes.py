@@ -150,7 +150,9 @@ def _suspicious_note(facts: dict) -> str | None:
 def _why(reason: str, facts: dict) -> str:
     label = facts["decision"]["label"]
     if reason.startswith("rare class"):
-        return f"The model suggests {label}; every prediction other than Cat1 is checked by a person."
+        # Name no category except this line's own label: the agent rejects any note that names a
+        # category missing from the evidence, and the template must pass the same check as the LLM.
+        return f"The model suggests {label}; only the most common class can be auto-labelled, so this line is checked by a person."
     if reason == "unseen vendor":
         return "This vendor has no labelled history, so the model cannot lean on past lines from it."
     if reason == "credit note":
