@@ -1,0 +1,33 @@
+[project]
+name = "ap-review-copilot"
+version = "0.1.0"
+description = "Invoice-line classifier that auto-labels only what is safe and routes the rest to a reviewer"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The repo root is on the path, so tests import `ml`, `api` and `data` as packages.
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 140          # the code base uses long, readable lines
+target-version = "py311"
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+# pycodestyle errors and warnings, pyflakes, import order, pyupgrade, bugbear.
+select = ["E", "W", "F", "I", "UP", "B"]
+ignore = [
+    "E402",   # app/ and tools/ add the repo root to sys.path before importing it
+    "B905",   # zip() without strict=: every zip here pairs arrays built to the same length
+]
+
+[tool.ruff.lint.per-file-ignores]
+"ml/agent/notes.py" = ["E501"]     # LLM prompts are kept as whole paragraphs, so the wording reads as sent
+"ml/explain.py" = ["B023"]         # label() is called inside the same loop iteration that defines it
+"api/main.py" = ["B008"]           # Body(...) in a default argument is how FastAPI declares a request body
+
+[tool.ruff.lint.isort]
+known-first-party = ["ml", "api", "app", "data", "tools"]

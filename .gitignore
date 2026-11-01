@@ -1,0 +1,21 @@
+.DS_Store
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+.env
+.pytest_cache/
+.ruff_cache/
+logs/
+dist/
+
+# Derived from the committed synthetic sample; rebuilt by `python -m ml.split` and `python -m ml.train`
+data/holdout/
+data/processed/
+models/*.joblib
+models/*_summary.json
+models/evaluation/
+data/synthetic/out/
+
+# Local-only list of words that must never be published (see tools/check_public_safe.py)
+.denylist
