@@ -34,7 +34,7 @@ def test_known_examples(bundle, good_record, cat1_record):
 def test_routing_rules_through_predict(bundle, cat1_record):
     new_vendor, credit, odd_doc = predict_records([
         {**cat1_record, "Col1": "Brand New Vendor Ltd"},
-        {**cat1_record, "Col3": -679.57},
+        {**cat1_record, "Col3": -7634.24},
         {**cat1_record, "Col7": "Doc9"},
     ], bundle)
     assert "unseen vendor" in new_vendor["review_reasons"]

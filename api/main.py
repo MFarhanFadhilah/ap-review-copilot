@@ -37,8 +37,8 @@ STATE: dict[str, Any] = {}
 class Record(BaseModel):
     """One transaction line, in the same seven columns as the training file."""
     model_config = ConfigDict(extra="forbid", json_schema_extra={"example": {
-        "Col1": "Ven107", "Col2": "26805430", "Col3": 760.0, "Col4": "Tok614",
-        "Col5": "2023-10-31", "Col6": "Acc2 Acc45", "Col7": "NoDoc"}})   # a synthetic Cat2 line
+        "Col1": "Ven70", "Col2": "YL30541", "Col3": 165.73, "Col4": "Tok99",
+        "Col5": "2023-09-30", "Col6": "Acc5 Acc68", "Col7": "NoDoc"}})   # a synthetic Cat2 line
 
     Col1: str | None = Field(None, description="vendor (tokenised)")
     Col2: str | int | float | None = Field(None, description="reference ID")

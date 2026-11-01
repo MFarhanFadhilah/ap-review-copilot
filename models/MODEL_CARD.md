@@ -19,33 +19,33 @@ The model suggests a category for each accounts-payable line. `ml/policy.py` the
 
 ## Training data
 
-- 6,000 synthetic lines from seed 42. The 10% hold-out (600 rows) is set aside first by `ml/split.py` and never used for training.
-- Cleaning (`ml/clean.py`) on the other 90% (5,400 rows): 11 label spellings mapped to 6 classes, 560 exact-duplicate copies removed (429 groups) and 1 conflicting-label group resolved to the majority. That leaves 4,839 lines.
-- The shipped model trains on all development months except Cat5: **4,836 lines** (Cat1 4,320 · Cat2 464 · Cat3 21 · Cat4 15 · Cat6 16).
+- 6,000 synthetic lines from seed 42. The 10% hold-out (602 rows) is set aside first by `ml/split.py` and never used for training.
+- Cleaning (`ml/clean.py`) on the other 90% (5,398 rows): 11 label spellings mapped to 6 classes, 558 exact-duplicate copies removed (425 groups) and 1 conflicting-label group resolved to the majority. That leaves 4,839 lines.
+- The shipped model trains on all development months except Cat5: **4,836 lines** (Cat1 4,315 · Cat2 467 · Cat3 22 · Cat4 15 · Cat6 17).
 - Features (`ml/features.py`): vendor tokens and the vendor itself, reference-ID shape and length, log amount, amount bands, credit-note and round-amount flags, TF-IDF on description words and word pairs, account and account group, and document type. The posting period is not a feature. It is used only for the time split.
 
 ## Evaluation (synthetic data)
 
-All numbers come from `python -m ml.evaluate`. See [`docs/split_strategy.md`](../docs/split_strategy.md) for the split.
+All numbers come from `python -m ml.evaluate`. See [`docs/split_strategy.md`](../docs/split_strategy.md) for the split. The README also reports a 60,000-row set with bootstrap intervals and seen versus unseen vendors.
 
-**Validation months (2023-09 to 2023-12, 797 lines the evaluation model never saw).** The evaluation model is fitted on the training months only, with its own threshold of 0.875.
+**Validation months (2023-09 to 2023-12, 795 lines the evaluation model never saw).** The evaluation model is fitted on the training months only, with its own threshold of 0.780.
 
 | Class | Lines | Precision | Recall | F1 | Vendor-lookup F1 |
 |---|---|---|---|---|---|
-| Cat1 | 722 | 0.967 | 0.928 | 0.947 | 0.953 |
-| Cat2 | 67 | 0.489 | 0.687 | 0.571 | 0.476 |
+| Cat1 | 713 | 0.966 | 0.958 | 0.962 | 0.971 |
+| Cat2 | 72 | 0.646 | 0.736 | 0.688 | 0.718 |
 | Cat3 | 4 | 1.000 | 1.000 | 1.000 | 1.000 |
-| Cat4 | 0 | 0.000 | 0.000 | 0.000 | 0.000 |
-| Cat6 | 3 | 0.400 | 0.667 | 0.500 | 0.800 |
-| **Macro-F1** | | | | **0.604** | **0.646** |
+| Cat4 | 1 | 0.000 | 0.000 | 0.000 | 0.000 |
+| Cat6 | 2 | 0.500 | 0.500 | 0.500 | 0.667 |
+| **Macro-F1** | | | | **0.630** | **0.671** |
 
-Cat4 has no validation lines. It is scored because the model predicted it once, wrongly. The validation months also hold 1 Cat5 line. The model cannot predict Cat5 and labelled it Cat1. As a credit note it still went to review. It counts in accuracy and routing, not in macro-F1.
+The validation months also hold 3 Cat5 lines. The model cannot predict Cat5. As credit notes they go to review, and they count in accuracy and routing, not in macro-F1.
 
-- **Routing:** 61.0% of lines auto-labelled at 98.35% Cat1 precision (target 98%). 311 lines go to review. 8 non-Cat1 lines were auto-labelled.
-- **Hold-out (shipped model, 537 lines after removing duplicate copies):** 90.5% accuracy, macro-F1 0.486, 72.6% auto-labelled at 97.95% Cat1 precision (just under the 98% target), 8 non-Cat1 lines auto-labelled. The hold-out has 6 rare-class lines in total, so its macro-F1 says little.
-- **Shipped threshold: 0.790**, set out-of-fold on all development months. Out-of-fold, that gives 74.7% automation at 98.01% precision.
+- **Routing:** 74.6% of lines auto-labelled at 98.31% Cat1 precision (target 98%). 202 lines go to review. 10 non-Cat1 lines were auto-labelled.
+- **Hold-out (shipped model, 537 lines after removing duplicate copies):** 96.1% accuracy, macro-F1 0.664, 78.8% auto-labelled at 99.53% Cat1 precision, 2 non-Cat1 lines auto-labelled. The hold-out has 9 rare-class lines in total, so its macro-F1 says little.
+- **Shipped threshold: 0.771**, set out-of-fold on all development months. Out-of-fold, that gives 79.8% automation at 98.00% precision.
 
-**The vendor lookup beats the model on macro-F1 here.** The whole gap comes from 4 lines: 3 Cat1 lines predicted Cat6 and 1 predicted Cat4. In this synthetic world each rare class comes from a few pure vendors, so a lookup gets those right. The balanced class weights make the model raise a few false rare-class alarms. On Cat2, the class with volume, the model is clearly better (F1 0.571 against 0.476, recall 0.687 against 0.448). Those false alarms go to review, so they cost reviewer time, not wrong postings.
+**The vendor lookup beats the model on macro-F1.** On the sample the difference is within noise (95% interval −0.111 to +0.005). On the 60,000-row set it is clear (−0.180 to −0.082). The model finds more rare-class lines than the lookup, but with many false alarms, and on the larger set the lookup is never wrong when it names a rare class. See the README for the full comparison.
 
 ## Explanations and the review agent
 
@@ -55,14 +55,14 @@ Cat4 has no validation lines. It is scored because the model predicted it once, 
 
 ## Limits
 
-- **Rare classes are tiny.** 15 to 21 training lines each, and 0 to 4 in the validation months. Per-class scores rest on a few lines.
-- **Cat5 is not learned.** It has 3 lines, all credit notes. Every credit note goes to review instead.
+- **Rare classes are tiny.** 15 to 22 training lines each, and 1 to 4 in the validation months. Per-class scores rest on a few lines.
+- **Cat5 is not learned.** The sample has 3 lines, all credit notes. Every credit note goes to review instead.
 - **Label drift.** The fixed-fee vendor's identical lines change label twice. The model learns past labels and cannot foresee a change in the labelling scheme.
 - **Synthetic data.** The generator's rules define what is learnable. A good score here says the pipeline works, not that it would score the same on real data.
 
 ## Monitoring signals
 
-Reviewer override rate on sampled auto-labels (must stay at or above 98% correct) · review-queue size and its mix of reasons · share of lines from unseen vendors and accounts (7.9% in the validation months) · per-vendor category share (drift) · share of auto-labels just above the threshold · novelty-flag rate from the agent · validation errors, warnings and duplicate flags.
+Reviewer override rate on sampled auto-labels (must stay at or above 98% correct) · review-queue size and its mix of reasons · share of lines from unseen vendors and accounts (6.3% in the validation months) · per-vendor category share (drift) · share of auto-labels just above the threshold · novelty-flag rate from the agent · validation errors, warnings and duplicate flags.
 
 ## Retraining
 
