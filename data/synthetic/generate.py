@@ -165,12 +165,14 @@ def build_world(cfg: dict, rows: int, rng: np.random.Generator) -> World:
     est_cat1 = np.flatnonzero((vendor_class == CAT1) & ~new)
     by_size = est_cat1[np.argsort(-weight[est_cat1], kind="stable")]
     # The largest one is kept pure Cat1: it is the vendor whose IDs Excel damaged.
+    corrupt_vendor = int(by_size[0])
+    candidates = by_size[1:]
     n_mixed = max(1, round(v["mixed_share"] * len(est_cat1)))
     mixed = np.zeros(n_v, bool)
-    mixed[by_size[1:n_mixed + 1]] = True
-    corrupt_vendor = int(by_size[0])
-    # Two more pure Cat1 vendors carry the big repeated line and the conflicting-label group.
-    big_vendor, conflict_vendor = (int(x) for x in by_size[n_mixed + 1:n_mixed + 3])
+    mixed[candidates[:n_mixed]] = True
+    # The two largest remaining pure Cat1 vendors carry the big repeated line and the conflicting-label group.
+    pure = [x for x in candidates if not mixed[x]]
+    big_vendor, conflict_vendor = int(pure[0]), int(pure[1])
 
     # Names: one unique token plus 0-3 tokens shared across vendors.
     n_shared = v["shared_name_tokens"]
@@ -305,9 +307,12 @@ def _amounts(w: World, cfg: dict, cls: np.ndarray, vendor: np.ndarray, rng) -> n
     median = np.array([am["median"][c] for c in CLASSES], float)
     sigma = np.array([am["sigma"][c] for c in CLASSES], float)
     log_amount = np.log(median[cls]) + sigma[cls] * rng.standard_normal(len(cls)) + w.vendor_offset[vendor]
-    amount = np.round(np.exp(log_amount), 2)
+    # Work in whole cents, so every amount is exactly representable to two decimals and the CSV
+    # text cannot depend on how a platform prints a float.
+    cents = np.rint(np.exp(log_amount) * 100)
     whole = rng.random(len(cls)) < am["round_share"]
-    amount[whole] = np.maximum(100.0, np.round(amount[whole] / 100) * 100)
+    cents[whole] = np.maximum(10_000, np.rint(cents[whole] / 10_000) * 10_000)   # whole hundreds
+    amount = cents / 100
     credit = (cls <= CAT2) & (rng.random(len(cls)) < am["credit_note_share"])
     amount[credit] *= -1
     amount[cls == CAT5] = -np.abs(amount[cls == CAT5])   # Cat5 lines are always credit notes
@@ -473,10 +478,17 @@ def generate_chunk(cfg: dict, w: World, n_rows: int, rng, first: bool, row_offse
 
     # Label noise on base rows only: the special cases keep their planned labels, legacy rows stay Cat1.
     # Half the flips go Cat1 -> Cat2 and half Cat2 -> Cat1, so the class shares stay as configured.
+    # With scope "mixed_vendors" the flips land only on vendors that already send more than one class:
+    # labellers disagree on ambiguous vendors, not on a vendor that always sends the same thing.
     k = round(cfg["learnability"]["label_noise"] * n_base / 2)
-    in_main = month >= start
-    to_cat2 = rng.choice(np.flatnonzero(in_main & (cls == CAT1)), k, replace=False)
-    to_cat1 = rng.choice(np.flatnonzero(in_main & (cls == CAT2)), k, replace=False)
+    eligible = month >= start
+    if cfg["learnability"].get("label_noise_scope", "all") == "mixed_vendors":
+        eligible &= w.vendor_mixed[base["vendor"]]
+    cat1_pool = np.flatnonzero(eligible & (cls == CAT1))
+    cat2_pool = np.flatnonzero(eligible & (cls == CAT2))
+    k = min(k, len(cat1_pool), len(cat2_pool))
+    to_cat2 = rng.choice(cat1_pool, k, replace=False)
+    to_cat1 = rng.choice(cat2_pool, k, replace=False)
     base["cls"][to_cat2], base["cls"][to_cat1] = CAT2, CAT1
 
     rows = _concat([base, *specials])
@@ -558,7 +570,8 @@ def generate(cfg: dict, rows: int, seed: int, out: str | Path, fmt: str = "csv")
     for i, (size, s) in enumerate(zip(sizes, chunk_seeds)):
         frame, truth = generate_chunk(cfg, world, size, np.random.default_rng(s), first=i == 0, row_offset=offset)
         if fmt == "csv":
-            frame.to_csv(out, mode="w" if i == 0 else "a", header=i == 0, index=False)
+            # Fixed number format: two decimals, whatever the platform's default float printing.
+            frame.to_csv(out, mode="w" if i == 0 else "a", header=i == 0, index=False, float_format="%.2f")
         else:
             import pyarrow as pa
             import pyarrow.parquet as pq

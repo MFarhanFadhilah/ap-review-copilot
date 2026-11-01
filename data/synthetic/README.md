@@ -64,13 +64,25 @@ It does **not** copy:
 - The real number of vendors or accounts, the real timeline, or the real model scores.
 - Real-world messiness beyond the list above, such as free-text descriptions, multiple currencies, tax lines or partial payments.
 
+## Calibrated vendor structure
+
+Four structure knobs (`label_noise_scope`, `vendors.mixed_share`, `learnability.cat1_overlap_factor` and `ref_ids.corrupted_vendor_share`) were set to match three aggregate facts about real accounts-payable data, measured on the 6,000-row sample. No model result was looked at while choosing them. See [ADR 0004](../../docs/adr/0004-generator-calibration.md).
+
+| Structure | Target | Sample (6,000 rows) | 60,000 rows, seed 43 |
+|---|---|---|---|
+| Rows from vendors with more than one label | about 0.45 | 0.454 | 0.664 |
+| Vendors with one label | about 0.89 | 0.889 | 0.857 |
+| Rows with an Excel-damaged ID | about 0.06 | 0.060 | 0.045 |
+
+The match holds at the sample size only. With ten times the rows, each vendor sends more lines, so more vendors pick up a second class.
+
 ## Learnability knobs
 
 Three knobs set how hard the task is.
 
 | Knob | Default | Raising it |
 |---|---|---|
-| `label_noise` | 0.02 | Swaps more Cat1 and Cat2 labels. Lowers the precision any model can reach, so fewer lines can be auto-labelled. |
+| `label_noise` | 0.02 | Swaps more Cat1 and Cat2 labels (only on mixed vendors, see `label_noise_scope`). Lowers the precision any model can reach, so fewer lines can be auto-labelled. |
 | `vendor_class_overlap` | 0.35 | Sends more non-Cat1 lines through vendors that mostly send Cat1. A vendor lookup gets worse and the description matters more. |
 | `description_signal` | 0.35 | Makes description tokens more class-specific. The model gets more confident, so more lines are auto-labelled. |
 
@@ -86,8 +98,8 @@ Measured on an Apple-silicon laptop:
 
 | Rows | Format | Wall time | Peak memory (RSS) |
 |---|---|---|---|
-| 1,000,000 | CSV | 3.7 s | 1.2 GB |
+| 1,000,000 | CSV | 3.9 s | 1.2 GB |
 | 1,000,000 | Parquet | 2.2 s | 1.2 GB |
-| 10,000,000 | Parquet | 18.6 s | 1.5 GB |
+| 10,000,000 | Parquet | 19.6 s | 1.5 GB |
 
 In a multi-chunk run, exact and near duplicates stay within a chunk. The one-off cases (the fixed-fee vendor, the large repeated line, the conflict group and the Cat5 rows) appear once, in the first chunk.

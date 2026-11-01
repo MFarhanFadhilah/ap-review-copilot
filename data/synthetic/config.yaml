@@ -44,7 +44,8 @@ vendors:
   # Share of vendors whose main class is each class (at least 2 per rare class).
   class_share: {Cat1: 0.855, Cat2: 0.115, Cat3: 0.01, Cat4: 0.008, Cat6: 0.012}
   # The largest Cat1 vendors that also send other classes ("mixed" vendors).
-  mixed_share: 0.12
+  # Set in ADR 0004 to hit structural targets, not model scores.
+  mixed_share: 0.06
   # Name: one unique token plus 0 to 3 tokens shared across vendors (like "Ltd").
   shared_name_tokens: 40
   name_extra_tokens_p: [0.35, 0.35, 0.2, 0.1]
@@ -93,7 +94,7 @@ ref_ids:
   shape_p: {numeric: 0.6, alphanumeric: 0.15, separator: 0.2, missing: 0.05}
   # One vendor's long numeric IDs went through Excel and became scientific
   # notation (3.17E+11). Anonymisation then scrambled the letter E: "3.17Q+11".
-  corrupted_vendor_share: 0.6
+  corrupted_vendor_share: 0.32   # ADR 0004: about 6% of all rows
   corrupted_stray_share: 0.002  # the same damage on a few other vendors' lines
 
 duplicates:
@@ -127,7 +128,10 @@ fixed_fee:
 # ---------------------------------------------------------------------------
 learnability:
   label_noise: 0.02           # share of base labels flipped, half Cat1 -> Cat2 and half Cat2 -> Cat1
+  # Where the flips land. "all": any vendor. "mixed_vendors": only vendors that already send more
+  # than one class, where labellers tend to disagree (ADR 0004).
+  label_noise_scope: mixed_vendors
   vendor_class_overlap: 0.35  # chance a non-Cat1 line comes from a mixed Cat1 vendor
-  cat1_overlap_factor: 0.1    # Cat1 lines borrow Cat2 vendors at overlap x this factor
+  cat1_overlap_factor: 0.03   # Cat1 lines borrow Cat2 vendors at overlap x this factor (ADR 0004)
   account_class_signal: 0.35  # chance the account is drawn from the class's groups, not the vendor's home
   description_signal: 0.35    # chance each description token is a class signal token
