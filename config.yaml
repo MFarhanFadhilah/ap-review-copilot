@@ -5,25 +5,7 @@ paths:
   # The committed synthetic sample (data/synthetic/). Any CSV, Parquet or Excel file
   # with columns Col1-Col7 and ClassificationLabel works here.
   raw_data: data/synthetic/sample.csv
-  clean_data: data/processed/clean.csv   # inspection copy; training always re-cleans from raw
-  cleaning_log: data/processed/cleaning_log.json
-  duplicate_report: data/processed/possible_duplicate_postings.csv
   model_dir: models
-
-columns:
-  vendor: Col1          # assumed: vendor / supplier name (tokenised)
-  ref_id: Col2          # assumed: invoice or reference number
-  amount: Col3          # assumed: line amount
-  description: Col4     # assumed: line description (tokenised)
-  period: Col5          # assumed: posting period
-  account: Col6         # assumed: GL account / cost centre (tokenised, hierarchical)
-  doc_type: Col7        # assumed: supporting-document type
-  label: ClassificationLabel
-
-cleaning:
-  # Rows before this period sit far from the main block (Jan-2022 onwards)
-  # and are flagged rather than dropped.
-  legacy_period_before: "2022-01-01"
 
 split:
   # Time-based hold-out: train on everything up to and including this period,
