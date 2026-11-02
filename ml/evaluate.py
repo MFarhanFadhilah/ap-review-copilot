@@ -14,11 +14,13 @@ Steps:
    lines auto-labelled and the Cat1 precision of those auto-labels.
 4. Compare with a vendor-lookup rule (each vendor's most common training
    label), the obvious thing to beat.
-5. Put 95% bootstrap intervals on macro-F1 and Cat2 F1 for both methods and on
+5. Compare routing with the vendor lookup used as a router, which auto-labels a
+   line only if every training line of its vendor is Cat1.
+6. Put 95% bootstrap intervals on macro-F1 and Cat2 F1 for both methods and on
    their difference, and split the results by vendors seen and not seen in training.
-6. Score the 10% hold-out file with the shipped model (``models/model.joblib``).
+7. Score the 10% hold-out file with the shipped model (``models/model.joblib``).
 
-``--data FILE`` runs steps 1 to 5 on a separate generated file instead, for example
+``--data FILE`` runs steps 1 to 6 on a separate generated file instead, for example
 a larger set made with another seed (``models/evaluation/validation_<name>.json``).
 
 Why macro-F1 is the headline: Cat1 is about 89% of lines, so a model that
@@ -82,6 +84,20 @@ def _per_class(y_true, pred, labels: list[str]) -> dict:
     p, r, f, n = precision_recall_fscore_support(y_true, pred, labels=labels, zero_division=0)
     return {c: {"precision": float(p[i]), "recall": float(r[i]), "f1": float(f[i]), "lines": int(n[i])}
             for i, c in enumerate(labels)}
+
+
+def lookup_router(train_df: pd.DataFrame, valid: pd.DataFrame) -> pd.Series:
+    """The vendor lookup used as a router: auto-label a line only if every training line of its vendor is Cat1."""
+    pure_cat1 = train_df.groupby("Col1")["label"].agg(lambda s: bool((s == AUTO_CLASS).all()))
+    return valid["Col1"].map(pure_cat1).fillna(False).astype(bool)
+
+
+def routing_summary(y_true: pd.Series, auto: pd.Series) -> dict:
+    """Auto-label share, Cat1 precision of the auto-labels, and non-Cat1 lines auto-labelled."""
+    return {"automation_rate": float(auto.mean()),
+            "auto_precision": float((y_true[auto] == AUTO_CLASS).mean()) if auto.any() else None,
+            "auto_lines": int(auto.sum()),
+            "non_cat1_auto": int((auto & (y_true != AUTO_CLASS)).sum())}
 
 
 def vendor_lookup(train_df: pd.DataFrame, valid: pd.DataFrame) -> pd.Series:
@@ -169,6 +185,11 @@ def evaluate(cfg: dict, eval_model: str | Path | None = None, data: str | Path |
         vendor_lookup_macro_f1=float(f1_score(valid["label"], baseline, labels=labels, average="macro", zero_division=0)),
         vendor_lookup_per_class=_per_class(valid["label"], baseline, labels),
         bootstrap_95=bootstrap(valid["label"], model_pred, baseline, labels, n=n_bootstrap),
+        routing_comparison={
+            "model_and_policy": routing_summary(valid["label"], pd.Series([r["route"] == "auto" for r in results],
+                                                                           index=valid.index)),
+            "vendor_lookup_router": routing_summary(valid["label"], lookup_router(train_df, valid)),
+        },
         segments={"seen_vendors": segment(valid["label"], model_pred, baseline, seen, labels),
                   "unseen_vendors": segment(valid["label"], model_pred, baseline, ~seen, labels)},
     )
