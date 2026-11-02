@@ -31,7 +31,7 @@ python -m pytest                          # 142 tests
 
 **LLM notes (optional).** Put `ANTHROPIC_API_KEY=...` in a `.env` file (git-ignored), or paste a key into the dashboard sidebar. Without a key everything still works, and notes come from a template labelled "Offline template explanation".
 
-**Synthetic data.** `data/synthetic/sample.csv` (6,000 rows) is committed. To make more:
+**Synthetic data (generator v1.0).** `data/synthetic/sample.csv` (6,000 rows) is committed. To make more:
 
 ```bash
 python -m data.synthetic.generate --seed 42 --rows 6000 --out data/synthetic/sample.csv
@@ -41,38 +41,47 @@ python -m data.synthetic.measure data/synthetic/sample.csv     # each quirk, con
 
 ## Results on synthetic demo data
 
-These numbers come from `python -m ml.evaluate`. They show the pipeline working end to end. They say nothing about real data, because the generator's own rules decide how hard the task is. The generator's vendor structure was set to match three aggregate facts about real data, without looking at any model result ([ADR 0004](docs/adr/0004-generator-calibration.md)).
+These numbers come from `python -m ml.evaluate` on data from **generator v1.0** ([ADR 0004](docs/adr/0004-generator-calibration.md)). They show the pipeline working end to end. They say nothing about real data, because the generator's own rules decide how hard the task is. The generator's vendor structure was tuned toward five aggregate facts about real data, using structure measures only. No model result was looked at while choosing it.
 
 Both sets use a time split. A model fitted on the months up to 2023-08 scores the four later months (2023-09 to 2023-12), as it would in use. The baseline is a vendor-lookup rule: each vendor's most common past label, and Cat1 for a vendor never seen. Brackets show 95% bootstrap intervals (2,000 paired resamples of the validation lines).
 
+**Labelling**
+
 | | 6,000-row sample (seed 42) | 60,000-row set (seed 43) |
 |---|---|---|
-| Validation lines | 795 | 9,091 |
-| **Macro-F1, model** | 0.630 [0.512, 0.736] | 0.678 [0.639, 0.715] |
-| **Macro-F1, vendor lookup** | 0.671 [0.519, 0.750] | 0.811 [0.766, 0.850] |
-| Difference, model − lookup | [−0.111, +0.005] | [−0.180, −0.082] |
-| Cat2 F1, model | 0.688 [0.601, 0.767] | 0.739 [0.716, 0.760] |
-| Cat2 F1, vendor lookup | 0.718 [0.627, 0.800] | 0.722 [0.696, 0.749] |
-| Auto-labelled at Cat1 precision | 74.6% at 98.31% | 76.4% at 98.24% |
-| Non-Cat1 lines auto-labelled | 10 | 122 |
+| Validation lines | 788 | 9,074 |
+| **Macro-F1, model** | 0.667 [0.466, 0.740] | 0.711 [0.662, 0.753] |
+| **Macro-F1, vendor lookup** | 0.709 [0.496, 0.762] | 0.712 [0.653, 0.764] |
+| Difference, model − lookup | [−0.106, 0.000] | [−0.057, +0.057] |
+| Cat2 F1, model | 0.707 [0.619, 0.788] | 0.714 [0.691, 0.737] |
+| Cat2 F1, vendor lookup | 0.766 [0.667, 0.847] | 0.743 [0.717, 0.768] |
 
-Lines from vendors seen and not seen in the training months (60,000-row set):
+**Seen and unseen vendors** (60,000-row set)
 
 | | Lines | Accuracy, model / lookup | Macro-F1, model / lookup |
 |---|---|---|---|
-| Seen vendors | 8,441 | 92.7% / 95.2% | 0.680 / 0.817 |
-| Unseen vendors | 650 | 94.8% / 91.2% | 0.546 / 0.318 |
+| Vendors seen in training | 8,319 | 93.7% / 96.5% | 0.708 / 0.834 |
+| Vendors not seen in training | 755 | 89.3% / 85.4% | 0.587 / 0.184 |
 
-Rare classes on the 60,000-row set (44, 34 and 31 lines):
+**Routing.** The vendor lookup used as a router auto-labels a line only if every training line of its vendor was Cat1.
 
-| | Cat3 precision / recall | Cat4 precision / recall | Cat6 precision / recall |
+| | Sample: auto-labelled | Cat1 precision | Non-Cat1 auto | 60k: auto-labelled | Cat1 precision | Non-Cat1 auto |
+|---|---|---|---|---|---|---|
+| Model + policy | 68.8% | 99.08% | 5 | 71.9% | 98.39% | 105 |
+| Vendor-lookup router | 48.0% | 100.00% | 0 | 43.8% | 99.87% | 5 |
+
+**Rare classes** (60,000-row set, precision / recall)
+
+| | Cat3 (46 lines) | Cat4 (23 lines) | Cat6 (39 lines) |
 |---|---|---|---|
-| Model | 0.529 / 0.841 | 0.431 / 0.824 | 0.333 / 0.839 |
-| Vendor lookup | 1.000 / 0.682 | 1.000 / 0.588 | 1.000 / 0.677 |
+| Model | 0.872 / 0.891 | 0.387 / 0.522 | 0.473 / 0.667 |
+| Vendor lookup | 1.000 / 0.870 | 1.000 / 0.217 | 1.000 / 0.385 |
 
-**What this means.** On this synthetic data the vendor lookup is the better labeller overall, and on the larger set the gap is clear: the whole interval for the difference is below zero. The reason shows in the rare classes. Each rare class comes from a few vendors, so when the lookup names a rare class it is always right, but it misses every rare line from a vendor that mostly sends Cat1. The model, trained with balanced class weights, finds about 83% of rare lines but raises one to two false alarms for each real one. The model is clearly ahead only on vendors it has never seen, where the lookup can only guess Cat1, and roughly level on Cat2. In this system every rare-class prediction goes to a reviewer, so the model's false alarms cost review time rather than wrong labels, while a rare line labelled Cat1 can be auto-labelled. That trade-off may suit routing, but it is an argument, not a measured win. On these numbers, a lookup-first hybrid or a different class weighting is worth testing next.
+**What this means.** On the larger set the model and the vendor lookup are level on macro-F1, and the interval for the difference sits evenly around zero. They get there in different ways. On vendors it has seen, the lookup labels better, because most vendors send one class and their history says which. On vendors it has never seen, the lookup can only guess Cat1, and the model is far better. For routing, the two sit at different points of one trade-off. The model auto-labels about 72% of lines and lets about 1.6% of its auto-labels be wrong (105 lines). The lookup router auto-labels about 44% and is almost never wrong. Neither result is a clear win, and that is the honest finding on this data.
 
-The hold-out of the 6,000-row sample (537 lines after removing duplicate copies, 9 rare-class lines) gives 96.1% accuracy and 78.8% auto-labelled at 99.53% Cat1 precision for the shipped model. Full per-class numbers are in the [model card](models/MODEL_CARD.md).
+**Next experiment: a hybrid.** Use the vendor lookup where a vendor has a clean single-class history, and the model everywhere else, with the same routing policy on top. It is not built yet.
+
+The hold-out of the 6,000-row sample (537 lines after removing duplicate copies, 6 rare-class lines) gives 94.4% accuracy and 77.5% auto-labelled at 99.04% Cat1 precision for the shipped model. Full per-class numbers are in the [model card](models/MODEL_CARD.md).
 
 ## How it works
 
@@ -99,7 +108,7 @@ Design notes: [`docs/adr/`](docs/adr/) · split: [`docs/split_strategy.md`](docs
 - **Rare classes are tiny in the sample.** Its validation months hold 1 to 4 lines per rare class, so one line moves macro-F1 a lot. That is why the 60,000-row set is reported too.
 - **Cat5 is not learned.** The sample has 3 lines, all credit notes. Every credit note goes to review instead.
 - **Knob sensitivity.** The learnability knobs move these results a lot. A sweep on an earlier version of the generator showed the auto-label share ranging from 23% to 78% across settings. That sweep has not been rerun on the current config.
-- **Scale changes structure.** The vendor structure was matched to real aggregates at 6,000 rows. At 60,000 rows the same config gives 0.664 of rows from mixed-label vendors (target 0.45), 0.857 single-class vendors (target 0.89) and 0.045 damaged IDs (target 0.06), because each vendor sends more lines.
+- **Generator v1.0 is frozen.** Its three vendor-structure measures hold within ±0.03 of their targets from 6,000 to 600,000 rows. The two rare-class measures are near their targets on large files, but noisy on small ones. Changing the generator needs a new ADR (see ADR 0004).
 - **Not ported yet:** the model-comparison ladder and its notebooks (the dashboard sections that showed them were removed), a React front end, Postgres, retraining and deployment.
 
 ## License

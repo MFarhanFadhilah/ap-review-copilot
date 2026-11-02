@@ -44,8 +44,8 @@ def good_record() -> dict:
     comes from a vendor whose every line is Cat2, and goes to review for the one
     reason "rare class (Cat2 predicted)".
     """
-    return {"Col1": "Ven70", "Col2": "YL30541", "Col3": 165.73, "Col4": "Tok99",
-            "Col5": "2023-09-30", "Col6": "Acc5 Acc68", "Col7": "NoDoc"}
+    return {"Col1": "Ven171", "Col2": "35462730", "Col3": 341.84, "Col4": "Tok1364",
+            "Col5": "2023-09-30", "Col6": "Acc5 Acc182", "Col7": "NoDoc"}
 
 
 @pytest.fixture
@@ -56,8 +56,8 @@ def cat1_record() -> dict:
     every line is Cat1, auto-labelled at >= 99% confidence, that still goes to review
     as a new vendor, as a credit note or with an unknown document type.
     """
-    return {"Col1": "Ven137 Ven366 Ven357", "Col2": "43991-21", "Col3": 7634.24, "Col4": "Tok1119 Tok1127 Tok253",
-            "Col5": "2023-09-30", "Col6": "Acc4 Acc145", "Col7": "NoDoc"}
+    return {"Col1": "Ven111 Ven336", "Col2": "67807-27", "Col3": 4500.0, "Col4": "Tok784 Tok1364",
+            "Col5": "2023-09-30", "Col6": "Acc7 Acc173", "Col7": "Doc3"}
 
 
 @pytest.fixture(scope="session")
