@@ -53,7 +53,7 @@ It reproduces these quirks of real accounts-payable data. Each one has a knob in
 - **Near duplicates.** The same vendor, amount, account and description posted again in the same or the next period, with a slightly different reference ID.
 - **Excel-damaged IDs** like `3.17Q+11`, nearly all from one vendor, among several normal ID shapes.
 - **A date convention change.** Month-start dates early on, month-end dates later, and a few legacy rows well before the main block.
-- **Labelling drift.** A fixed-fee vendor bills the same amount to one account every month, and its label changes twice.
+- **Labelling drift.** Fixed-fee vendors (one per 6,000 lines) bill the same amount to one account every month, and their label changes twice.
 - **Structure.** Most vendors send one class and some are mixed. Account codes are hierarchical, and the doc type almost always follows the account group.
 - **New vendors** in the last four months.
 - **Description signal.** Some tokens are strongly linked to a class. Most are shared noise.
@@ -64,17 +64,19 @@ It does **not** copy:
 - The real number of vendors or accounts, the real timeline, or the real model scores.
 - Real-world messiness beyond the list above, such as free-text descriptions, multiple currencies, tax lines or partial payments.
 
-## Calibrated vendor structure
+## Generator v1.0: calibrated vendor structure
 
-Four structure knobs (`label_noise_scope`, `vendors.mixed_share`, `learnability.cat1_overlap_factor` and `ref_ids.corrupted_vendor_share`) were set to match three aggregate facts about real accounts-payable data, measured on the 6,000-row sample. No model result was looked at while choosing them. See [ADR 0004](../../docs/adr/0004-generator-calibration.md).
+The vendor structure was tuned toward five aggregate facts about real accounts-payable data, in two rounds, using structure measures only. No model result was looked at while choosing it. The full procedure, the knobs and every value tried are in [ADR 0004](../../docs/adr/0004-generator-calibration.md). That config is frozen as **generator v1.0** (`generator_version` in `config.yaml`). Any further change to the generator needs a new ADR.
 
-| Structure | Target | Sample (6,000 rows) | 60,000 rows, seed 43 |
-|---|---|---|---|
-| Rows from vendors with more than one label | about 0.45 | 0.454 | 0.664 |
-| Vendors with one label | about 0.89 | 0.889 | 0.857 |
-| Rows with an Excel-damaged ID | about 0.06 | 0.060 | 0.045 |
+| Structure | Target | 6,000 rows (seed 42) | 60,000 rows (seed 43) | 600,000 rows (seed 44) |
+|---|---|---|---|---|
+| Rows from vendors with more than one label | 0.45 ± 0.03 | 0.431 | 0.467 | 0.468 |
+| Vendors with one label | 0.89 ± 0.03 | 0.893 | 0.886 | 0.889 |
+| Rows with an Excel-damaged ID | 0.06 ± 0.03 | 0.060 | 0.0595 | 0.0588 |
+| Rare-class lines from multi-label vendors | about 0.78 | 0.724 | 0.767 | 0.761 |
+| Rare-class validation lines from a vendor seen earlier | about 0.81 | 0.875 (8 lines) | 0.685 (108 lines) | 0.810 (964 lines) |
 
-The match holds at the sample size only. With ten times the rows, each vendor sends more lines, so more vendors pick up a second class.
+Three things keep the structure the same at every size. Vendor counts grow in proportion to rows. Vendor sizes are fixed quantiles of one lognormal curve, not random draws. And there is one fixed-fee vendor per 6,000 lines.
 
 ## Learnability knobs
 
@@ -98,8 +100,8 @@ Measured on an Apple-silicon laptop:
 
 | Rows | Format | Wall time | Peak memory (RSS) |
 |---|---|---|---|
-| 1,000,000 | CSV | 3.9 s | 1.2 GB |
-| 1,000,000 | Parquet | 2.2 s | 1.2 GB |
-| 10,000,000 | Parquet | 19.6 s | 1.5 GB |
+| 1,000,000 | CSV | 4.4 s | 1.3 GB |
+| 1,000,000 | Parquet | 2.4 s | 1.3 GB |
+| 10,000,000 | Parquet | 21.6 s | 1.8 GB |
 
-In a multi-chunk run, exact and near duplicates stay within a chunk. The one-off cases (the fixed-fee vendor, the large repeated line, the conflict group and the Cat5 rows) appear once, in the first chunk.
+In a multi-chunk run, exact and near duplicates stay within a chunk. Fixed-fee vendors are spread over the chunks. The other one-off cases (the large repeated line, the conflict group and the Cat5 rows) appear once, in the first chunk.
