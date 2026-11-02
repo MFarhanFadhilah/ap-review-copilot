@@ -47,6 +47,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yaml
+from scipy.special import ndtri
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CONFIG = HERE / "config.yaml"
@@ -72,7 +73,7 @@ def near_duplicates_path(out: str | Path) -> Path:
 # Small helpers
 # --------------------------------------------------------------------------
 def _scaled(base: int, rows: int, minimum: int) -> int:
-    """Entity counts grow with sqrt(rows): more lines bring more vendors, but far fewer than lines."""
+    """Account and token counts grow with sqrt(rows). (Vendor counts grow with rows, see build_world.)"""
     return max(minimum, round(base * np.sqrt(rows / 6000)))
 
 
@@ -137,16 +138,26 @@ class World:
     class_signal: dict
     noise_tokens: np.ndarray
     noise_p: np.ndarray
-    fixed_fee_name: str
-    fixed_fee_account: int
-    fixed_fee_description: str
+    fixed_fee_names: np.ndarray        # one entry per fixed-fee vendor
+    fixed_fee_accounts: np.ndarray
+    fixed_fee_descriptions: np.ndarray
+    fixed_fee_amounts: np.ndarray
 
 
-def build_world(cfg: dict, rows: int, rng: np.random.Generator) -> World:
+def fixed_fee_counts(cfg: dict, sizes: list[int]) -> list[int]:
+    """Fixed-fee vendors per chunk: one per ``fixed_fee.rows_per_vendor`` lines, at least one in the first chunk."""
+    per = cfg["fixed_fee"]["rows_per_vendor"]
+    counts = [round(n / per) for n in sizes]
+    counts[0] = max(1, counts[0])
+    return counts
+
+
+def build_world(cfg: dict, rows: int, rng: np.random.Generator, n_fixed_fee: int = 1) -> World:
     v, a, d = cfg["vendors"], cfg["accounts"], cfg["description"]
 
     # Vendors and their main class. Rare classes get at least 2 vendors each.
-    n_v = _scaled(v["count"], rows, 50)
+    # The vendor count grows in proportion to rows, so lines per vendor stay stable at any size (ADR 0004).
+    n_v = max(50, round(v["count"] * rows / 6000))
     counts = _split_counts(n_v, v["class_share"])
     for c in ("Cat3", "Cat4", "Cat6"):
         short = max(0, 2 - counts[c])
@@ -154,7 +165,10 @@ def build_world(cfg: dict, rows: int, rng: np.random.Generator) -> World:
         counts["Cat1"] -= short
     vendor_class = np.concatenate([np.full(k, IDX[c]) for c, k in counts.items()])
     rng.shuffle(vendor_class)
-    weight = _zipf(n_v, v["zipf_exponent"], rng)
+    # Sizes are the quantiles of one fixed lognormal at evenly spaced probabilities, in random order.
+    # Random draws would make the top vendors' share swing from seed to seed with a few hundred
+    # vendors. Quantiles give the same size curve at every file size and every seed (ADR 0004).
+    weight = np.exp(v["size_sigma"] * ndtri((np.arange(n_v) + 0.5) / n_v))[rng.permutation(n_v)]
 
     # "New" vendors only post in the last months. Taken from Cat1 and Cat2 vendors.
     common = np.flatnonzero(vendor_class <= CAT2)
@@ -164,8 +178,12 @@ def build_world(cfg: dict, rows: int, rng: np.random.Generator) -> World:
     # Mixed vendors: the largest established Cat1 vendors, which also send other classes.
     est_cat1 = np.flatnonzero((vendor_class == CAT1) & ~new)
     by_size = est_cat1[np.argsort(-weight[est_cat1], kind="stable")]
-    # The largest one is kept pure Cat1: it is the vendor whose IDs Excel damaged.
+    # The largest one is kept pure Cat1: it is the vendor whose IDs Excel damaged. It gets a fixed
+    # share of all rows (vendors.largest_share), as one such vendor exists whatever the file size.
     corrupt_vendor = int(by_size[0])
+    target = v["largest_share"] / cfg["classes"]["shares"]["Cat1"]    # as a share of Cat1 lines
+    others = weight[est_cat1].sum() - weight[corrupt_vendor]
+    weight[corrupt_vendor] = target / (1 - target) * others
     candidates = by_size[1:]
     n_mixed = max(1, round(v["mixed_share"] * len(est_cat1)))
     mixed = np.zeros(n_v, bool)
@@ -180,10 +198,14 @@ def build_world(cfg: dict, rows: int, rng: np.random.Generator) -> World:
     shared_p = _zipf(n_shared, 1.0, rng)
     uid = rng.permutation(n_v) + 1
     n_extra = rng.choice(4, n_v, p=v["name_extra_tokens_p"])
-    names = np.array([
-        " ".join([f"Ven{uid[i]}", *rng.choice(shared, n_extra[i], replace=False, p=shared_p)])
-        for i in range(n_v)   # a loop over vendors (hundreds), not over rows
-    ], dtype=object)
+    # Up to 3 distinct shared tokens per vendor, weighted, without a Python loop: adding Gumbel noise
+    # to log-weights and keeping the top keys is weighted sampling without replacement.
+    keys = np.log(shared_p) + rng.gumbel(size=(n_v, n_shared))
+    picks = shared[np.argsort(-keys, axis=1)[:, :3]]
+    names = _text([f"Ven{u}" for u in uid])
+    for j in range(3):
+        has = n_extra > j
+        names[has] = names[has] + " " + picks[has, j]
 
     shapes = cfg["ref_ids"]["shape_p"]
     shape = rng.choice(4, n_v, p=[shapes[k] for k in ("numeric", "alphanumeric", "separator", "missing")])
@@ -231,9 +253,13 @@ def build_world(cfg: dict, rows: int, rng: np.random.Generator) -> World:
         group_doc=np.array(a["group_doc_types"], dtype=object), class_accounts=class_accounts,
         token_names=token_names, class_signal=class_signal, noise_tokens=noise,
         noise_p=_zipf(len(noise), d["noise_zipf_exponent"]),
-        fixed_fee_name=f"Ven{n_v + n_shared + 1} {shared[0]}",
-        fixed_fee_account=int(fixed_account_pool[rng.integers(len(fixed_account_pool))]),
-        fixed_fee_description=" ".join(token_names[noise[rng.choice(len(noise), 2, replace=False)]]),
+        fixed_fee_names=_text([f"Ven{n_v + n_shared + 1 + j} {shared[j % n_shared]}" for j in range(n_fixed_fee)]),
+        fixed_fee_accounts=fixed_account_pool[rng.integers(0, len(fixed_account_pool), n_fixed_fee)],
+        fixed_fee_descriptions=_text([" ".join(token_names[noise[rng.choice(len(noise), 2, replace=False)]])
+                                      for _ in range(n_fixed_fee)]),
+        # The first fee is the configured one; the others are other whole-hundred fees.
+        fixed_fee_amounts=np.concatenate([[float(cfg["fixed_fee"]["amount"])],
+                                          rng.integers(5, 100, n_fixed_fee - 1) * 100.0]),
     )
 
 
@@ -244,17 +270,25 @@ def _vendors(w: World, cfg: dict, cls: np.ndarray, from_new: np.ndarray, rng) ->
     learn = cfg["learnability"]
     out = np.empty(len(cls), int)
     established = ~w.vendor_new
-    fallback = np.flatnonzero(established & (w.vendor_class == CAT1))
+    # Cat5 has no vendors of its own. Its few lines come from mixed vendors, which already send several
+    # classes, so 3 lines can never turn a big pure vendor into a mixed one.
+    fallback = np.flatnonzero(w.vendor_mixed)
     for c in np.unique(cls):
         rows = np.flatnonzero(cls == c)
-        chance = learn["vendor_class_overlap"] * (learn["cat1_overlap_factor"] if c == CAT1 else 1.0)
+        if c == CAT1:
+            chance = learn["vendor_class_overlap"] * learn["cat1_overlap_factor"]
+        elif c == CAT2:
+            chance = learn["vendor_class_overlap"]
+        else:   # rare classes have their own structural knob (ADR 0004, round 2)
+            chance = learn["rare_class_overlap"]
         new = from_new[rows]
         borrowed = (rng.random(len(rows)) < chance) & ~new
         pools = [
             (~borrowed & ~new, np.flatnonzero(established & (w.vendor_class == c))),
             (borrowed, np.flatnonzero(established & (w.vendor_class == CAT2)) if c == CAT1
              else np.flatnonzero(w.vendor_mixed)),
-            (new, np.flatnonzero(w.vendor_new & (w.vendor_class == c))),
+            # A late rare line from a new vendor can come from any new vendor: there are no new rare-class vendors.
+            (new, np.flatnonzero(w.vendor_new & (w.vendor_class == c)) if c <= CAT2 else np.flatnonzero(w.vendor_new)),
         ]
         for mask, pool in pools:
             if not mask.any():
@@ -386,20 +420,24 @@ def _take(rows: dict, idx: np.ndarray) -> dict:
 # --------------------------------------------------------------------------
 # Special cases (first chunk only)
 # --------------------------------------------------------------------------
-def _fixed_fee(w: World, cfg: dict, rng) -> dict:
+def _fixed_fee(w: World, cfg: dict, rng, vendors: np.ndarray) -> dict:
+    """One line a month for each of the given fixed-fee vendors, with the scheduled label."""
     t, f = cfg["timeline"], cfg["fixed_fee"]
-    month = _month(t["start"]) + np.arange(t["months"]).astype("timedelta64[M]")
+    months = _month(t["start"]) + np.arange(t["months"]).astype("timedelta64[M]")
     changes = sorted((_month(m), IDX[c]) for m, c in f["schedule"].items())
-    cls = np.array([[c for m0, c in changes if m0 <= m][-1] for m in month])
-    n = len(month)
+    per_month = np.array([[c for m0, c in changes if m0 <= m][-1] for m in months])
+    v = np.repeat(vendors, len(months))
+    i = np.tile(np.arange(len(months)), len(vendors))
+    base = 40_000 + 1_000 * (v % 50)          # each vendor has its own invoice-number range
+    acc = w.fixed_fee_accounts[v]
     return {
-        "cls": cls, "month": month, "vendor": np.full(n, -1),
-        "Col1": np.full(n, w.fixed_fee_name, dtype=object),
-        "Col2": _text([f"{40_000 + 37 * i}-{22 + i // 12}" for i in range(n)]),   # one invoice number a month
-        "Col3": np.full(n, float(f["amount"])),
-        "Col4": np.full(n, w.fixed_fee_description, dtype=object),
-        "Col6": np.full(n, w.account_names[w.fixed_fee_account], dtype=object),
-        "Col7": np.full(n, w.group_doc[w.account_group[w.fixed_fee_account]], dtype=object),
+        "cls": per_month[i], "month": months[i], "vendor": np.full(len(v), -1),
+        "Col1": w.fixed_fee_names[v],
+        "Col2": _text(base + 37 * i) + "-" + _text(22 + i // 12),   # one invoice number a month
+        "Col3": w.fixed_fee_amounts[v],
+        "Col4": w.fixed_fee_descriptions[v],
+        "Col6": w.account_names[acc],
+        "Col7": w.group_doc[w.account_group[acc]],
     }
 
 
@@ -439,14 +477,16 @@ def _cat5(w: World, cfg: dict, rng) -> dict:
 # --------------------------------------------------------------------------
 # One chunk
 # --------------------------------------------------------------------------
-def generate_chunk(cfg: dict, w: World, n_rows: int, rng, first: bool, row_offset: int = 0
-                   ) -> tuple[pd.DataFrame, pd.DataFrame]:
+def generate_chunk(cfg: dict, w: World, n_rows: int, rng, first: bool, row_offset: int = 0,
+                   fixed_fee_vendors: np.ndarray | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Return ``(raw rows, near-duplicate ground truth)`` for one chunk."""
     t, dup, near = cfg["timeline"], cfg["duplicates"], cfg["near_duplicates"]
     start, span = _month(t["start"]), t["months"]
 
-    specials = [_fixed_fee(w, cfg, rng), _big_line(w, cfg, rng), _conflict_group(w, cfg, rng), _cat5(w, cfg, rng)] \
-        if first else []
+    # Fixed-fee vendors are spread over the chunks; the other special cases appear once, in the first chunk.
+    ff_vendors = np.array([0]) if fixed_fee_vendors is None else fixed_fee_vendors
+    fixed = _fixed_fee(w, cfg, rng, ff_vendors)
+    specials = [fixed] + ([_big_line(w, cfg, rng), _conflict_group(w, cfg, rng), _cat5(w, cfg, rng)] if first else [])
     n_special = sum(len(s["cls"]) for s in specials)
     n_dup = round(n_rows * dup["extra_copy_rate"])
     n_near = round(n_rows * near["rate"])
@@ -455,10 +495,9 @@ def generate_chunk(cfg: dict, w: World, n_rows: int, rng, first: bool, row_offse
         raise ValueError(f"--rows {n_rows} is too small for the configured special cases")
 
     # Class counts. The fixed-fee lines count towards their classes, so rare classes are not inflated.
-    target = _split_counts(n_base + (len(specials[0]["cls"]) if first else 0), cfg["classes"]["shares"])
-    if first:
-        for c in specials[0]["cls"]:
-            target[CLASSES[c]] -= 1
+    target = _split_counts(n_base + len(fixed["cls"]), cfg["classes"]["shares"])
+    for c, k in zip(*np.unique(fixed["cls"], return_counts=True)):
+        target[CLASSES[c]] -= int(k)
     deficit = n_base - sum(max(0, k) for k in target.values())
     target = {c: max(0, k) for c, k in target.items()}
     target["Cat1"] += deficit
@@ -473,7 +512,8 @@ def generate_chunk(cfg: dict, w: World, n_rows: int, rng, first: bool, row_offse
     legacy_span = int((_month(t["legacy_end"]) - legacy_start).astype(int)) + 1
     month[legacy] = _months(n_legacy, rng, legacy_start, legacy_span)
     late = month >= start + np.timedelta64(span - cfg["new_vendors"]["months"], "M")
-    from_new = late & (cls <= CAT2) & (rng.random(n_base) < cfg["new_vendors"]["late_share"])
+    chance_new = np.where(cls <= CAT2, cfg["new_vendors"]["late_share"], cfg["new_vendors"]["rare_share"])
+    from_new = late & (rng.random(n_base) < chance_new)
     base = _make_rows(w, cfg, cls, month, rng, from_new=from_new)
 
     # Label noise on base rows only: the special cases keep their planned labels, legacy rows stay Cat1.
@@ -563,12 +603,15 @@ def generate(cfg: dict, rows: int, seed: int, out: str | Path, fmt: str = "csv")
     sizes = [chunk] * (rows // chunk) + ([rows % chunk] if rows % chunk else [])
     # One independent stream per chunk: chunk i always gets the same stream for a given seed.
     world_seed, *chunk_seeds = np.random.SeedSequence(seed).spawn(1 + len(sizes))
-    world = build_world(cfg, rows, np.random.default_rng(world_seed))
+    ff_counts = fixed_fee_counts(cfg, sizes)
+    world = build_world(cfg, rows, np.random.default_rng(world_seed), n_fixed_fee=sum(ff_counts))
+    ff_start = np.cumsum([0, *ff_counts])
 
     started = time.perf_counter()
     writer, truths, offset = None, [], 0
     for i, (size, s) in enumerate(zip(sizes, chunk_seeds)):
-        frame, truth = generate_chunk(cfg, world, size, np.random.default_rng(s), first=i == 0, row_offset=offset)
+        frame, truth = generate_chunk(cfg, world, size, np.random.default_rng(s), first=i == 0, row_offset=offset,
+                                      fixed_fee_vendors=np.arange(ff_start[i], ff_start[i + 1]))
         if fmt == "csv":
             # Fixed number format: two decimals, whatever the platform's default float printing.
             frame.to_csv(out, mode="w" if i == 0 else "a", header=i == 0, index=False, float_format="%.2f")

@@ -89,7 +89,7 @@ def measure(path: str | Path, cfg: dict | None = None) -> dict:
     # Reference IDs
     corrupted = df["Col2"].fillna("").str.match(CORRUPTED)
     top_vendor = df.loc[corrupted, "Col1"].value_counts()
-    put("corrupted IDs, share of rows", None, round(float(corrupted.mean()), 4))
+    put("corrupted IDs, share of rows", 0.06, round(float(corrupted.mean()), 4))
     put("corrupted IDs from one vendor", None, round(float(top_vendor.iloc[0] / corrupted.sum()), 3))
     put("that vendor's lines corrupted", cfg["ref_ids"]["corrupted_vendor_share"],
         round(float(corrupted[df["Col1"] == top_vendor.index[0]].mean()), 3))
@@ -118,8 +118,8 @@ def measure(path: str | Path, cfg: dict | None = None) -> dict:
 
     # Vendor and account structure
     vendor_labels = stats["labels"]
-    put("vendors with one class", None, round(float((vendor_labels == 1).mean()), 3))
-    put("rows from vendors with more than one class", None,
+    put("vendors with one class", 0.89, round(float((vendor_labels == 1).mean()), 3))
+    put("rows from vendors with more than one class", 0.45,
         round(float(df["Col1"].map(vendor_labels).gt(1).mean()), 3))
     group = df["Col6"].str.split().str[0]
     modal = df.groupby(group)["Col7"].agg(lambda s: s.value_counts().iloc[0]).sum() / n
@@ -131,6 +131,15 @@ def measure(path: str | Path, cfg: dict | None = None) -> dict:
     seen_before = set(df.loc[~window, "Col1"])
     put(f"lines in the last {k} months from vendors new in that window", cfg["new_vendors"]["late_share"],
         round(float((~df.loc[window, "Col1"].isin(seen_before)).mean()), 4))
+
+    # Rare-class structure (ADR 0004, round 2), on unique rows
+    rare = label.isin(["Cat3", "Cat4", "Cat6"]) & unique
+    put("rare-class lines from vendors with more than one class", 0.78,
+        round(float(df.loc[rare, "Col1"].map(vendor_labels).gt(1).mean()), 3))
+    rare_late = rare & window
+    put(f"rare-class lines in the last {k} months whose vendor appears earlier", 0.81,
+        round(float(df.loc[rare_late, "Col1"].isin(seen_before).mean()), 3) if rare_late.any() else None)
+    put("rare-class lines in those months", None, int(rare_late.sum()))
 
     # Description signal: tokens whose lines are mostly Cat2 (base rate about 10%)
     tokens = df.assign(label=label)[["Col4", "label"]].assign(tok=lambda f: f["Col4"].str.split()).explode("tok")

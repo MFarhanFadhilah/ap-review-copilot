@@ -143,3 +143,28 @@ def test_chunked_and_parquet_output(tmp_path):
     pd.testing.assert_frame_equal(csv.fillna(""), parquet.fillna(""), check_dtype=False)
     q = measure(tmp_path / "x.csv", cfg)
     assert q["near-duplicate pairs valid (same vendor/amount/account/description, differ, <= 1 period apart)"]["measured"] == 1.0
+
+
+# --------------------------------------------------------------------------
+# Structural targets (ADR 0004), at the sample size and ten times larger
+# --------------------------------------------------------------------------
+STRUCTURE = {"rows from vendors with more than one class": 0.45, "vendors with one class": 0.89,
+             "corrupted IDs, share of rows": 0.06}
+
+
+def test_structure_matches_targets_in_the_sample(quirks):
+    for name, target in STRUCTURE.items():
+        assert quirks[name]["measured"] == pytest.approx(target, abs=0.03), name
+
+
+def test_structure_holds_at_ten_times_the_rows(tmp_path):
+    """Vendor counts grow with rows and sizes come from fixed quantiles, so structure does not drift with size."""
+    out = tmp_path / "big.csv"
+    generate(CFG, 60_000, 43, out)
+    q = measure(out, CFG)
+    for name, target in STRUCTURE.items():
+        assert q[name]["measured"] == pytest.approx(target, abs=0.03), name
+
+
+def test_generator_is_versioned():
+    assert CFG["generator_version"] == "1.0"
